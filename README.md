@@ -1,2 +1,49 @@
-# preactical_ml
-Practical Machine Learning course project
+---
+title: 'Practical Machine Learning: Course Project'
+output: html_document
+---
+
+We will try to train ML algorithm to predict a manner of exercise execution. More on the data can be found here: http://groupware.les.inf.puc-rio.br/har.
+
+First we load the data and remove variables with mostly zeroes or NAs.
+```{r}
+train_data <- read.csv("pml-training.csv", na.strings=c("NA", "#DIV/0!"))
+test_data <- read.csv("pml-testing.csv", na.strings=c("NA", "#DIV/0!"))
+train_data <- train_data[, -1]
+train_data <- train_data[!(names(train_data) %in% c("kurtosis_yaw_forearm", "skewness_yaw_forearm", "amplitude_yaw_forearm", "skewness_yaw_dumbbell", "kurtosis_yaw_dumbbell", "amplitude_yaw_belt", "skewness_yaw_belt", "kurtosis_yaw_belt", "cvtd_timestamp", "raw_timestamp_part_1", "raw_timestamp_part_2", "user_name"))]
+test_data <- test_data[, -1]
+test_data <- test_data[!(names(test_data) %in% c("kurtosis_yaw_forearm", "skewness_yaw_forearm", "amplitude_yaw_forearm", "skewness_yaw_dumbbell", "kurtosis_yaw_dumbbell", "amplitude_yaw_belt", "skewness_yaw_belt", "kurtosis_yaw_belt", "cvtd_timestamp", "raw_timestamp_part_1", "raw_timestamp_part_2", "user_name"))]
+```
+
+Then we split train data into several partitions: to select features, to train models and to compare models. We'll estimate OOB error rate on final test set (provided).
+```{r}
+in_test <- -createDataPartition(train_data$classe, p=0.8, list=F)
+test_model_selection <- train_data[in_test, ]
+in_train <- createDataPartition(train_data[-in_test, ]$classe, p=0.8, list=F)
+trn <- train_data[-in_test, ][in_train, ]
+test_feature_selection <- train_data[-in_test, ][-in_train, ]
+```
+
+Then we'll build a random forest, estimate features important and leave only the most important.
+```{r}
+rf_feat_sel <- randomForest(classe ~ ., data=test_feature_selection, na.action=na.roughfix)
+feat_imp <- importance(rf_feat_sel)
+
+trn_clean <- trn[, -(names(trn)=="classe")][, feat_imp > 29]
+trn_clean$classe <- trn$classe
+test_model_selection_clean <- test_model_selection[, -(names(test_model_selection)=="classe")][, feat_imp > 29]
+test_model_selection_clean$classe <- test_model_selection$classe
+```
+
+Then we train our models on train set and compare them on control set. GBM model shows better performance, so we use it.
+```{r}
+model_rf <- randomForest(classe ~ ., data=trn_clean, na.action=na.roughfix)
+model_gbm <- gbm(classe ~ ., data=trn_clean, n.cores=4, shrinkage=0.01, n.trees=500, n.minobsinnode=20, interaction.depth=5)
+
+pred_rf <- predict(model_rf, newdata=test_model_selection_clean)
+
+pred_gbm <- predict(model_gbm, newdata=test_model_selection_clean, n.trees=500)
+ans_gbm <- names(pred_gbm[1, , 1])[apply(pred_gbm[, , 1], 1, which.max)]
+
+confusionMatrix(ans_gbm, test_model_selection_clean$classe)
+```
